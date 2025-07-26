@@ -1,0 +1,27 @@
+# Arquivos do Claude
+.claude/
+.claude*
+
+# Arquivos temporários do Julia
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+deps/deps.jl
+
+# Arquivos de backup
+*~
+*.bak
+*.tmp
+
+# Logs
+*.log
+
+# Arquivos do sistema
+.DS_Store
+Thumbs.db
+
+# Arquivos do VS Code
+.vscode/
+
+# Arquivos de output específicos (se não quiser versionar)
+# resultado_alm_bancario.txt
