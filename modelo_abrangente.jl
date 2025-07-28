@@ -27,7 +27,8 @@ passivos_df = DataFrame(
     custo = [0.02, 0.11, 0.115, 0.13],
     limite_maximo = [100_000_000, 150_000_000, 50_000_000, 50_000_000],
     fator_saida_estresse = [0.05, 0.10, 0.20, 1.00], # Runoff padronizado do regulador
-    fator_asf = [0.95, 0.90, 0.90, 0.00] # Available Stable Funding para NSFR
+    fator_asf = [0.95, 0.90, 0.90, 0.00], # Available Stable Funding para NSFR
+    duration = [0.5, 2.0, 1.0, 0.1] # Duration dos passivos (sensibilidade a taxa de juros)
 )
 
 println(output_file, "Fontes de funding disponíveis:")
@@ -45,6 +46,12 @@ custo_capital_proprio = 0.20
 # Adicionar fator RSF aos ativos para NSFR
 ativos_df.fator_rsf = [0.0, 0.05, 0.05, 0.85] # Required Stable Funding
 
+# Adicionar duration aos ativos (sensibilidade a taxa de juros em anos)
+ativos_df.duration = [0.0, 1.0, 5.0, 3.0] # Caixa (0), Títulos Curto (1), Títulos Longo (5), Crédito (3)
+
+# Adicionar inflows para LCR (entradas de caixa em cenário de estresse)
+ativos_df.fator_inflow = [0.0, 0.0, 0.0, 0.15] # 15% do crédito privado gera inflows
+
 # Adicionar limites máximos para concentração de ativos
 ativos_df.limite_maximo = [Inf, Inf, Inf, 400_000_000] # Limite de R$ 400M para crédito privado
 
@@ -60,6 +67,17 @@ ativos_df.provisoes_perdas = [0.0, 0.0, 0.0, 0.025] # 2.5% sobre crédito
 # Parâmetro mínimo de adequação de capital (Basel)
 minimo_capital_adequacao = 0.115 # 11.5%
 
+# Reserva de capital para risco operacional (% do total de ativos)
+reserva_risco_operacional = 0.015 # 1.5% dos ativos totais
+
+# Limites para Duration Gap (controle de risco de taxa de juros)
+limite_duration_gap_min = -1.5 # Mínimo -1.5 anos
+limite_duration_gap_max = 1.5  # Máximo +1.5 anos
+duration_capital_proprio = 0.0 # Capital próprio tem duration zero
+
+# Capital para risco de mercado baseado no Duration Gap
+fator_capital_risco_mercado = 0.02 # 2% dos ativos para cada ano de Duration Gap absoluto
+
 # Parâmetro mínimo NSFR
 minimo_nsfr = 1.0 # 100%
 
@@ -70,7 +88,10 @@ println(output_file, "Parâmetros regulatórios:")
 @printf(output_file, "Capital Próprio: R\$ %.2f\n", Capital_Proprio)
 @printf(output_file, "Custo de Capital Próprio: %.1f%%\n", custo_capital_proprio * 100)
 @printf(output_file, "Mínimo Capital Adequação: %.1f%%\n", minimo_capital_adequacao * 100)
-@printf(output_file, "Mínimo NSFR: %.0f%%\n\n", minimo_nsfr * 100)
+@printf(output_file, "Reserva Risco Operacional: %.1f%% dos ativos\n", reserva_risco_operacional * 100)
+@printf(output_file, "Mínimo NSFR: %.0f%%\n", minimo_nsfr * 100)
+@printf(output_file, "Duration Gap Permitido: %.1f a %.1f anos\n", limite_duration_gap_min, limite_duration_gap_max)
+@printf(output_file, "Capital Risco Mercado: %.1f%% dos ativos por ano de Duration Gap\n\n", fator_capital_risco_mercado * 100)
 
 # 4. Construção do Modelo
 model = Model(HiGHS.Optimizer)
@@ -89,10 +110,22 @@ custo_total_passivos = passivos_df.custo' * funding
 # Custos operacionais e provisões
 custos_operacionais_total = ativos_df.custos_operacionais' * alocacao
 provisoes_total = ativos_df.provisoes_perdas' * alocacao
-# Custo de capital aplicado apenas sobre capital alocado para ativos de risco
+# Custo de capital aplicado sobre capital alocado para RWA + reserva operacional + risco mercado
 rwa_total_variavel = ativos_df.risco_ponderado' * alocacao
-capital_alocado = rwa_total_variavel * minimo_capital_adequacao
-custo_capital = capital_alocado * custo_capital_proprio
+capital_alocado_rwa = rwa_total_variavel * minimo_capital_adequacao
+capital_alocado_operacional = reserva_risco_operacional * sum(alocacao)
+
+# Capital para risco de mercado baseado na diferença absoluta de duration ponderada
+# Usamos variáveis auxiliares para linearizar o valor absoluto do duration gap
+@variable(model, duration_gap_pos >= 0)
+@variable(model, duration_gap_neg >= 0)
+duration_ponderada_ativos_obj = ativos_df.duration' * alocacao
+duration_ponderada_passivos_obj = passivos_df.duration' * funding + duration_capital_proprio * Capital_Proprio
+@constraint(model, c_duration_gap_decomp, duration_ponderada_ativos_obj - duration_ponderada_passivos_obj == duration_gap_pos - duration_gap_neg)
+capital_alocado_mercado = fator_capital_risco_mercado * (duration_gap_pos + duration_gap_neg)
+
+capital_alocado_total = capital_alocado_rwa + capital_alocado_operacional + capital_alocado_mercado
+custo_capital = capital_alocado_total * custo_capital_proprio
 # EVA antes de impostos
 eva_antes_impostos = retorno_total_ativos - custo_total_passivos - custos_operacionais_total - provisoes_total - custo_capital - custo_administrativo_fixo
 # EVA após impostos
@@ -104,21 +137,46 @@ eva_apos_impostos = eva_antes_impostos * (1 - aliquota_impostos)
 # 7a. Equilíbrio do Balanço (incluindo capital próprio)
 @constraint(model, c_balanco, sum(alocacao) == sum(funding) + Capital_Proprio)
 
-# 7b. LCR Abrangente: HQLA deve cobrir as saídas da tesouraria + as saídas do crédito (agora dinâmico)
+# 7b. LCR Refinado: (HQLA + Inflows) deve cobrir Outflows líquidos
 hqla_total = ativos_df.fator_hqla' * alocacao
 saidas_funding_tesouraria = passivos_df.fator_saida_estresse' * funding
 saidas_credito_dinamico = ativos_df.fator_saida_credito' * alocacao
+inflows_total = ativos_df.fator_inflow' * alocacao
 
-@constraint(model, c_lcr_abrangente, hqla_total >= saidas_funding_tesouraria + saidas_credito_dinamico)
+# LCR = (HQLA + Inflows) / Outflows >= 100%
+outflows_total = saidas_funding_tesouraria + saidas_credito_dinamico
+recursos_liquidos = hqla_total + inflows_total
 
-# 7c. Adequação de Capital (Basel) - Capital deve cobrir risco dos ativos
+@constraint(model, c_lcr_refinado, recursos_liquidos >= outflows_total)
+
+# 7c. Adequação de Capital (Basel) - Capital deve cobrir todos os riscos separadamente
 rwa_total = ativos_df.risco_ponderado' * alocacao
-@constraint(model, c_basileia, Capital_Proprio >= minimo_capital_adequacao * rwa_total)
+total_ativos = sum(alocacao)
+
+# Requerimentos de capital por tipo de risco
+req_capital_credito = minimo_capital_adequacao * rwa_total
+req_capital_operacional = reserva_risco_operacional * total_ativos  
+req_capital_mercado = fator_capital_risco_mercado * (duration_gap_pos + duration_gap_neg)
+req_capital_total = req_capital_credito + req_capital_operacional + req_capital_mercado
+
+@constraint(model, c_basileia, Capital_Proprio >= req_capital_total)
 
 # 7d. NSFR - Funding estável deve cobrir necessidades de funding estável
 asf_total = passivos_df.fator_asf' * funding + fator_asf_capital * Capital_Proprio
 rsf_total = ativos_df.fator_rsf' * alocacao
 @constraint(model, c_nsfr, asf_total >= minimo_nsfr * rsf_total)
+
+# 7e. Duration Gap Refinado - Controle preciso de risco de taxa de juros
+# Duration Gap = (Σ Duration_i × Ativo_i - Σ Duration_j × Passivo_j) / Total_Balanço
+# Formulação linear: Duration_Ativos_Ponderada - Duration_Passivos_Ponderada em limites absolutos
+
+duration_ponderada_ativos = ativos_df.duration' * alocacao
+duration_ponderada_passivos = passivos_df.duration' * funding + duration_capital_proprio * Capital_Proprio
+total_balanco = sum(alocacao)
+
+# Restrições de Duration Gap como diferença absoluta normalizada pelo balanço
+@constraint(model, c_duration_gap_min, duration_ponderada_ativos - duration_ponderada_passivos >= limite_duration_gap_min * total_balanco)
+@constraint(model, c_duration_gap_max, duration_ponderada_ativos - duration_ponderada_passivos <= limite_duration_gap_max * total_balanco)
 
 # 8. Resolver e Analisar
 optimize!(model)
@@ -128,7 +186,11 @@ if termination_status(model) == OPTIMAL
     
     # Cálculo detalhado do EVA
     rwa_calculado = ativos_df.risco_ponderado' * value.(alocacao)
-    capital_alocado_calculado = rwa_calculado * minimo_capital_adequacao
+    total_ativos_calculado = sum(value.(alocacao))
+    capital_alocado_rwa_calculado = rwa_calculado * minimo_capital_adequacao
+    capital_alocado_operacional_calculado = reserva_risco_operacional * total_ativos_calculado
+    capital_alocado_mercado_calculado = fator_capital_risco_mercado * (value(duration_gap_pos) + value(duration_gap_neg))
+    capital_alocado_calculado = capital_alocado_rwa_calculado + capital_alocado_operacional_calculado + capital_alocado_mercado_calculado
     capital_livre = Capital_Proprio - capital_alocado_calculado
     custo_capital_calculado = capital_alocado_calculado * custo_capital_proprio
     
@@ -150,6 +212,11 @@ if termination_status(model) == OPTIMAL
     @printf(output_file, "Custos Operacionais Variáveis: R\$ %.2f\n", custos_operacionais_calculado)
     @printf(output_file, "Custos Administrativos Fixos: R\$ %.2f\n", custo_administrativo_fixo)
     @printf(output_file, "Provisões para Perdas: R\$ %.2f\n", provisoes_calculado)
+    @printf(output_file, "Capital Alocado (RWA): R\$ %.2f\n", capital_alocado_rwa_calculado)
+    @printf(output_file, "Capital Alocado (Risco Operacional): R\$ %.2f\n", capital_alocado_operacional_calculado)
+    @printf(output_file, "Capital Alocado (Risco Mercado): R\$ %.2f\n", capital_alocado_mercado_calculado)
+    @printf(output_file, "Capital Alocado Total: R\$ %.2f\n", capital_alocado_calculado)
+    @printf(output_file, "Capital Livre: R\$ %.2f\n", capital_livre)
     @printf(output_file, "Custo de Capital Alocado (%.1f%%): R\$ %.2f\n", custo_capital_proprio * 100, custo_capital_calculado)
     @printf(output_file, "EVA Antes de Impostos: R\$ %.2f\n", eva_antes_impostos_calculado)
     @printf(output_file, "Impostos (%.1f%%): R\$ %.2f\n", aliquota_impostos * 100, impostos_calculado)
@@ -176,18 +243,22 @@ if termination_status(model) == OPTIMAL
     )
     println(output_file, alocacao_otima_df)
     
-    # Análise da Cobertura de Liquidez
+    # Análise da Cobertura de Liquidez Refinada
     hqla_gerado = ativos_df.fator_hqla' * value.(alocacao)
     saida_tesouraria = passivos_df.fator_saida_estresse' * value.(funding)
     saida_credito_calculada = ativos_df.fator_saida_credito' * value.(alocacao)
+    inflows_calculado = ativos_df.fator_inflow' * value.(alocacao)
     saida_total_necessaria = saida_tesouraria + saida_credito_calculada
+    recursos_liquidos_calculado = hqla_gerado + inflows_calculado
     
-    println(output_file, "\n--- Análise de Liquidez (LCR) ---")
+    println(output_file, "\n--- Análise de Liquidez (LCR Refinado) ---")
     @printf(output_file, "HQLA Gerado: R\$ %.2f\n", hqla_gerado)
+    @printf(output_file, "Inflows de Caixa: R\$ %.2f\n", inflows_calculado)
+    @printf(output_file, "Recursos Líquidos Total: R\$ %.2f\n", recursos_liquidos_calculado)
     @printf(output_file, "Saída de Caixa (Tesouraria): R\$ %.2f\n", saida_tesouraria)
-    @printf(output_file, "Saída de Caixa (Crédito - Dinâmico): R\$ %.2f\n", saida_credito_calculada)
-    @printf(output_file, "Total de Saídas a Cobrir: R\$ %.2f\n", saida_total_necessaria)
-    @printf(output_file, "LCR Efetivo: %.2f%%\n", (hqla_gerado / saida_total_necessaria) * 100)
+    @printf(output_file, "Saída de Caixa (Crédito): R\$ %.2f\n", saida_credito_calculada)
+    @printf(output_file, "Total de Saídas (Outflows): R\$ %.2f\n", saida_total_necessaria)
+    @printf(output_file, "LCR Refinado: %.2f%%\n", (recursos_liquidos_calculado / saida_total_necessaria) * 100)
 
     # Análise de Adequação de Capital (Basel) - usar variável já calculada
     ratio_capital = Capital_Proprio / rwa_calculado
@@ -209,6 +280,29 @@ if termination_status(model) == OPTIMAL
     @printf(output_file, "Ratio NSFR: %.2f%%\n", ratio_nsfr * 100)
     @printf(output_file, "Mínimo Requerido: %.0f%%\n", minimo_nsfr * 100)
     
+    # Análise Duration Gap (Risco de Taxa de Juros)
+    # total_ativos_calculado já foi definido acima
+    total_passivos_calculado = sum(value.(funding)) + Capital_Proprio
+    duration_media_ativos_calculado = (ativos_df.duration' * value.(alocacao)) / total_ativos_calculado
+    duration_media_passivos_calculado = (passivos_df.duration' * value.(funding) + duration_capital_proprio * Capital_Proprio) / total_passivos_calculado
+    duration_gap_calculado = duration_media_ativos_calculado - duration_media_passivos_calculado
+    
+    println(output_file, "\n--- Análise Duration Gap (Risco de Taxa de Juros) ---")
+    @printf(output_file, "Duration Média dos Ativos: %.2f anos\n", duration_media_ativos_calculado)
+    @printf(output_file, "Duration Média dos Passivos: %.2f anos\n", duration_media_passivos_calculado)
+    @printf(output_file, "Duration Gap: %.2f anos\n", duration_gap_calculado)
+    @printf(output_file, "Limite Mínimo: %.1f anos\n", limite_duration_gap_min)
+    @printf(output_file, "Limite Máximo: %.1f anos\n", limite_duration_gap_max)
+    
+    # Análise de sensibilidade a taxa de juros (impacto no EVE com choque de 2%)
+    choque_taxa = 0.02 # 2%
+    impacto_eve_percent = -duration_gap_calculado * choque_taxa * 100
+    impacto_eve_valor = (total_ativos_calculado * impacto_eve_percent / 100)
+    
+    @printf(output_file, "\n--- Impacto de Choque de Taxa (+2%%) no EVE ---\n")
+    @printf(output_file, "Impacto no EVE: %.2f%% do total de ativos\n", impacto_eve_percent)
+    @printf(output_file, "Impacto no EVE: R\$ %.2f\n", impacto_eve_valor)
+    
     # Retornar valores para comparação
     return Dict(
         "eva" => objective_value(model),
@@ -218,15 +312,24 @@ if termination_status(model) == OPTIMAL
         "capital_livre" => capital_livre,
         "tamanho_balanco" => tamanho_otimo_balanco,
         "hqla_total" => hqla_gerado,
+        "inflows_total" => inflows_calculado,
+        "recursos_liquidos" => recursos_liquidos_calculado,
         "saidas_tesouraria" => saida_tesouraria,
         "saidas_credito" => saida_credito_calculada,
         "saidas_total" => saida_total_necessaria,
-        "lcr" => (hqla_gerado / saida_total_necessaria) * 100,
+        "lcr_refinado" => (recursos_liquidos_calculado / saida_total_necessaria) * 100,
         "rwa_total" => rwa_calculado,
         "ratio_capital" => ratio_capital * 100,
         "asf_total" => asf_calculado,
         "rsf_total" => rsf_calculado,
         "ratio_nsfr" => ratio_nsfr * 100,
+        "duration_media_ativos" => duration_media_ativos_calculado,
+        "duration_media_passivos" => duration_media_passivos_calculado,
+        "duration_gap" => duration_gap_calculado,
+        "impacto_eve_percent" => impacto_eve_percent,
+        "impacto_eve_valor" => impacto_eve_valor,
+        "reserva_operacional" => reserva_risco_operacional * total_ativos_calculado,
+        "capital_alocado_mercado" => capital_alocado_mercado_calculado,
         "funding_otimo" => value.(funding),
         "alocacao_otima" => value.(alocacao)
     )

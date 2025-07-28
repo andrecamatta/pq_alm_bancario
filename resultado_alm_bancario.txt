@@ -11,34 +11,42 @@ Ativos disponíveis:
    4 │ Credito_Privado                  0.21         0.0                   0.1              1.0
 
 Fontes de funding disponíveis:
-4×5 DataFrame
- Row │ fonte                custo    limite_maximo  fator_saida_estresse  fator_asf
-     │ String               Float64  Int64          Float64               Float64
-─────┼──────────────────────────────────────────────────────────────────────────────
-   1 │ Depositos_Vista        0.02       100000000                  0.05       0.95
-   2 │ CDB_Varejo_Estavel     0.11       150000000                  0.1        0.9
-   3 │ CDB_Varejo_Instavel    0.115       50000000                  0.2        0.9
-   4 │ Interbank              0.13        50000000                  1.0        0.0
+4×6 DataFrame
+ Row │ fonte                custo    limite_maximo  fator_saida_estresse  fator_asf  duration
+     │ String               Float64  Int64          Float64               Float64    Float64
+─────┼────────────────────────────────────────────────────────────────────────────────────────
+   1 │ Depositos_Vista        0.02       100000000                  0.05       0.95       0.5
+   2 │ CDB_Varejo_Estavel     0.11       150000000                  0.1        0.9        2.0
+   3 │ CDB_Varejo_Instavel    0.115       50000000                  0.2        0.9        1.0
+   4 │ Interbank              0.13        50000000                  1.0        0.0        0.1
 
 Parâmetros regulatórios:
 Capital Próprio: R$ 50000000.00
 Custo de Capital Próprio: 20.0%
 Mínimo Capital Adequação: 11.5%
+Reserva Risco Operacional: 1.5% dos ativos
 Mínimo NSFR: 100%
+Duration Gap Permitido: -1.5 a 1.5 anos
+Capital Risco Mercado: 2.0% dos ativos por ano de Duration Gap
 
 Status da Otimização: Solução ótima encontrada!
 --- Análise de Valor Econômico Adicionado (EVA) ---
-Receita de Ativos: R$ 67295454.55
+Receita de Ativos: R$ 66937500.00
 Custo de Funding: R$ 24250000.00
-Margem Financeira: R$ 43045454.55
-Custos Operacionais Variáveis: R$ 4481818.18
+Margem Financeira: R$ 42687500.00
+Custos Operacionais Variáveis: R$ 4437500.00
 Custos Administrativos Fixos: R$ 8000000.00
-Provisões para Perdas: R$ 7272727.27
-Custo de Capital Alocado (20.0%): R$ 6690909.09
-EVA Antes de Impostos: R$ 16600000.00
-Impostos (40.0%): R$ 6640000.00
-EVA Após Impostos: R$ 9960000.00
-ROE: 19.92%
+Provisões para Perdas: R$ 7187500.00
+Capital Alocado (RWA): R$ 33062500.00
+Capital Alocado (Risco Operacional): R$ 5250000.00
+Capital Alocado (Risco Mercado): R$ 10500000.00
+Capital Alocado Total: R$ 48812500.00
+Capital Livre: R$ 1187500.00
+Custo de Capital Alocado (20.0%): R$ 9762500.00
+EVA Antes de Impostos: R$ 13300000.00
+Impostos (40.0%): R$ 5320000.00
+EVA Após Impostos: R$ 7980000.00
+ROE: 15.96%
 
 --- Balanço Ótimo ---
 Tamanho Total: R$ 350000000.00
@@ -59,26 +67,39 @@ Capital Próprio: R$ 50000000.00
  Row │ Ativo                 Valor_Alocado  Percentual_Total
      │ String                Float64        Float64
 ─────┼───────────────────────────────────────────────────────
-   1 │ Caixa                     0.0                    0.0
-   2 │ Titulos_Gov_BR_Curto      5.90909e7             16.88
-   3 │ Titulos_Gov_BR_Longo      0.0                    0.0
-   4 │ Credito_Privado           2.90909e8             83.12
+   1 │ Caixa                       0.0                  0.0
+   2 │ Titulos_Gov_BR_Curto        6.25e7              17.86
+   3 │ Titulos_Gov_BR_Longo        0.0                  0.0
+   4 │ Credito_Privado             2.875e8             82.14
 
---- Análise de Liquidez (LCR) ---
-HQLA Gerado: R$ 59090909.09
+--- Análise de Liquidez (LCR Refinado) ---
+HQLA Gerado: R$ 62500000.00
+Inflows de Caixa: R$ 43125000.00
+Recursos Líquidos Total: R$ 105625000.00
 Saída de Caixa (Tesouraria): R$ 30000000.00
-Saída de Caixa (Crédito - Dinâmico): R$ 29090909.09
-Total de Saídas a Cobrir: R$ 59090909.09
-LCR Efetivo: 100.00%
+Saída de Caixa (Crédito): R$ 28750000.00
+Total de Saídas (Outflows): R$ 58750000.00
+LCR Refinado: 179.79%
 
 --- Análise de Adequação de Capital (Basel) ---
-Risk-Weighted Assets (RWA): R$ 290909090.91
+Risk-Weighted Assets (RWA): R$ 287500000.00
 Capital Próprio: R$ 50000000.00
-Ratio de Capital: 17.19%
+Ratio de Capital: 17.39%
 Mínimo Requerido: 11.5%
 
 --- Análise NSFR (Net Stable Funding Ratio) ---
 Available Stable Funding (ASF): R$ 325000000.00
-Required Stable Funding (RSF): R$ 250227272.73
-Ratio NSFR: 129.88%
+Required Stable Funding (RSF): R$ 247500000.00
+Ratio NSFR: 131.31%
 Mínimo Requerido: 100%
+
+--- Análise Duration Gap (Risco de Taxa de Juros) ---
+Duration Média dos Ativos: 2.64 anos
+Duration Média dos Passivos: 1.14 anos
+Duration Gap: 1.50 anos
+Limite Mínimo: -1.5 anos
+Limite Máximo: 1.5 anos
+
+--- Impacto de Choque de Taxa (+2%) no EVE ---
+Impacto no EVE: -3.00% do total de ativos
+Impacto no EVE: R$ -10500000.00
