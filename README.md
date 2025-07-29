@@ -4,20 +4,22 @@
 
 Este projeto implementa um modelo **completo e avançado** de **Asset-Liability Management (ALM)** para instituições bancárias, integrando os **3 pilares de risco de Basileia** (crédito, operacional e mercado) em uma otimização unificada que maximiza o **Valor Econômico Adicionado (EVA)** considerando o custo de capital de todos os riscos.
 
+O modelo incorpora **padrões regulatórios brasileiros** para risco de taxa de juros, incluindo **Risco de Base** (hedges imperfeitos) e limites de Duration Gap calibrados para o mercado nacional, oferecendo uma solução realista e aplicável para instituições financeiras brasileiras.
+
 ## Características do Modelo
 
 O modelo considera os seguintes aspectos bancários:
 
 ### Ativos Disponíveis (com Duration)
 - **Caixa**: Liquidez imediata, duration 0 anos
-- **Títulos Governamentais de Curto Prazo**: Alta liquidez, duration 1 ano, retorno 10,5%
-- **Títulos Governamentais de Longo Prazo**: Liquidez moderada, duration 5 anos, retorno 11%
-- **Crédito Privado**: Alto retorno (21%), duration 3 anos, RWA 100%
+- **Títulos Governamentais de Curto Prazo**: Alta liquidez, duration 0,8 anos, retorno 10,5%
+- **Títulos Governamentais de Longo Prazo**: Liquidez moderada, duration 4,5 anos, retorno 11%
+- **Crédito Privado**: Alto retorno (18%), duration 2,8 anos, RWA 100%
 
-### Fontes de Funding (com Duration)
-- **Depósitos à Vista**: Custo 2%, duration 0,5 anos, ASF 95%
-- **CDB Varejo Estável**: Custo 11%, duration 2 anos, ASF 90%
-- **CDB Varejo Instável**: Custo 11,5%, duration 1 ano, ASF 90%
+### Fontes de Funding (com Duration Otimizada)
+- **Depósitos à Vista**: Custo 2%, duration 0,4 anos, ASF 95%
+- **CDB Varejo Estável**: Custo 11%, duration 2,5 anos, ASF 90%
+- **CDB Varejo Instável**: Custo 11,5%, duration 0,9 anos, ASF 90%
 - **Interbancário**: Custo 13%, duration 0,1 anos, ASF 0%
 
 ### Integração Completa dos 3 Pilares de Risco
@@ -34,8 +36,9 @@ O modelo considera os seguintes aspectos bancários:
 - **Metodologia**: Abordagem do Indicador Básico (BIA)
 
 #### 📈 **3. Risco de Mercado (Taxa de Juros)**
-- **Duration Gap**: Controlado entre -1,5 e +1,5 anos
-- **Capital de risco**: 2% dos ativos × |Duration Gap|
+- **Duration Gap**: Controlado entre -1,0 e +1,0 anos (padrão brasileiro)
+- **Capital de risco**: 1,5% dos ativos × |Duration Gap| (calibrado para Brasil)
+- **Risco de Base**: 8% de capital sobre exposição a hedges imperfeitos
 - **Análise de choque**: Impacto de +2% nas taxas sobre EVE
 - **Sensibilidade**: Medição precisa da exposição à taxa de juros
 
@@ -87,6 +90,7 @@ O modelo gera um arquivo `resultado_alm_bancario.txt` contendo:
 - **Estrutura Ótima**: Composição de ativos e passivos
 - **Indicadores Regulatórios**: LCR refinado, NSFR, adequação de capital
 - **Duration Gap Analysis**: Sensibilidade a taxa de juros e impacto no EVE
+- **Análise de Risco de Base**: Exposição a hedges imperfeitos e capital requerido
 - **Análise de Liquidez**: HQLA, inflows, outflows e recursos líquidos
 
 ## Estrutura do Projeto
@@ -110,7 +114,9 @@ pq_alm_bancario/
 ### 📊 **Gestão Avançada de Riscos**
 - **3 Pilares Integrados**: Crédito, operacional e mercado em modelo único
 - **Duration Matching**: Otimização da sensibilidade a taxa de juros
+- **Risco de Base**: Modelagem de hedges imperfeitos com fatores por instrumento
 - **Capital Allocation**: Alocação eficiente entre tipos de risco
+- **Padrões Brasileiros**: Limites e fatores calibrados para o mercado nacional
 
 ### 💧 **Liquidez Sofisticada**
 - **LCR Refinado**: Inclui inflows realistas de caixa
@@ -119,26 +125,30 @@ pq_alm_bancario/
 
 ### 📈 **Análises Estratégicas**
 - **Sensitivity Analysis**: Impacto de choques nas taxas de juros
+- **Risco de Base**: Modelagem de hedges imperfeitos
+- **Duration Gap Management**: Otimização de risco de taxa de juros
 - **Capital Stress**: Simulação de cenários de capital
 - **Scenario Planning**: Múltiplos cenários econômicos
 
 ## Parâmetros Configuráveis
 
 ### 📊 **Parâmetros de Mercado**
-- Retornos esperados dos ativos (10,5% - 21%)
+- Retornos esperados dos ativos (10,5% - 18%)
 - Custos das fontes de funding (2% - 13%)
-- Durations dos ativos e passivos
+- Durations otimizadas dos ativos e passivos
 - Fatores de inflow de liquidez
+- Fatores de risco de base por instrumento
 
 ### ⚖️ **Parâmetros Regulatórios**
 - Índices mínimos de capital (11,5%)
 - Reserva para risco operacional (1,5%)
-- Fator de capital para risco de mercado (2%)
-- Limites de Duration Gap (-1,5 a +1,5 anos)
+- Fator de capital para risco de mercado (1,5% - padrão brasileiro)
+- Limites de Duration Gap (-1,0 a +1,0 anos - padrão brasileiro)
+- Capital para risco de base (8% sobre hedges imperfeitos)
 - Fatores LCR e NSFR por instrumento
 
 ### 🎯 **Parâmetros de Gestão**
-- Custo de capital próprio (20%)
+- Custo de capital próprio (15%)
 - Alíquota de impostos (40%)
 - Limites de concentração por ativo
 - Cenários de estresse customizáveis
@@ -146,27 +156,29 @@ pq_alm_bancario/
 ## Resultados Típicos
 
 ### 💰 **Métricas de Performance**
-- **ROE**: ~16% (otimizado com restrições de risco)
-- **EVA**: R$ 8M+ (valor econômico após custo de capital)
-- **Margem Financeira**: R$ 42M+ (spread otimizado)
+- **ROE**: ~16,3% (otimizado com restrições de risco)
+- **EVA**: R$ 3,7M+ (valor econômico após custo de capital)
+- **Margem Financeira**: R$ 32M+ (spread otimizado)
 
 ### 📊 **Distribuição de Capital**
-- **Risco de Crédito**: ~68% do capital (R$ 33M)
-- **Risco de Mercado**: ~22% do capital (R$ 11M)  
-- **Risco Operacional**: ~10% do capital (R$ 5M)
+- **Risco de Crédito**: ~67% do capital (R$ 30,5M)
+- **Risco de Mercado**: ~21% do capital (R$ 9,5M)  
+  - Risco de Prazo (Duration Gap): R$ 5,25M
+  - Risco de Base (Hedges Imperfeitos): R$ 4,27M
+- **Risco Operacional**: ~12% do capital (R$ 5,25M)
 
 ### 🎯 **Indicadores Regulatórios**
-- **LCR Refinado**: 180%+ (bem acima do mínimo 100%)
-- **NSFR**: 130%+ (funding estável adequado)
-- **Índice de Capital**: 17%+ (robusto vs mínimo 11,5%)
+- **LCR Refinado**: 220%+ (bem acima do mínimo 100%)
+- **NSFR**: 142%+ (funding estável adequado)
+- **Índice de Capital**: 18,9%+ (robusto vs mínimo 11,5%)
 
 ## Uso Prático
 
 ### 🏦 **Para Instituições Financeiras**
-- **Tesourarias**: Otimização estratégica de ALM integrada
-- **Áreas de Risco**: Análise de adequação aos 3 pilares
-- **ALCO**: Suporte a decisões de comitê
-- **Planejamento**: Simulação de cenários e stress tests
+- **Tesourarias**: Otimização estratégica de ALM integrada com padrões brasileiros
+- **Áreas de Risco**: Análise de adequação aos 3 pilares incluindo risco de base
+- **ALCO**: Suporte a decisões de comitê com métricas de EVA
+- **Planejamento**: Simulação de cenários e stress tests realistas
 
 ### 🎓 **Para Pesquisa e Ensino**
 - **Universidades**: Modelo educacional completo de ALM

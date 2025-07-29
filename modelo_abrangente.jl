@@ -11,7 +11,7 @@ println(output_file, "=== MODELO ALM BANCÁRIO: OTIMIZAÇÃO INTEGRADA DE ATIVOS
 # 1. Modelando os ATIVOS
 ativos_df = DataFrame(
     ativo = ["Caixa", "Titulos_Gov_BR_Curto", "Titulos_Gov_BR_Longo", "Credito_Privado"],
-    retorno_esperado = [0.00, 0.105, 0.11, 0.21],
+    retorno_esperado = [0.00, 0.105, 0.11, 0.18],
     fator_hqla = [1.0, 1.0, 0.85, 0.0], # Fatores HQLA para cada ativo
     fator_saida_credito = [0.0, 0.0, 0.0, 0.10], # Fator de saída de crédito em estresse
     risco_ponderado = [0.0, 0.0, 0.0, 1.0] # Risk-weighted assets para Basel
@@ -28,7 +28,8 @@ passivos_df = DataFrame(
     limite_maximo = [100_000_000, 150_000_000, 50_000_000, 50_000_000],
     fator_saida_estresse = [0.05, 0.10, 0.20, 1.00], # Runoff padronizado do regulador
     fator_asf = [0.95, 0.90, 0.90, 0.00], # Available Stable Funding para NSFR
-    duration = [0.5, 2.0, 1.0, 0.1] # Duration dos passivos (sensibilidade a taxa de juros)
+    duration = [0.4, 2.5, 0.9, 0.1], # Duration otimizada dos passivos (CDB Estável com duration maior)
+    risco_base_fator = [0.05, 0.06, 0.10, 0.20] # Fatores otimizados de risco de base (menores)
 )
 
 println(output_file, "Fontes de funding disponíveis:")
@@ -40,17 +41,20 @@ println(output_file)
 Capital_Proprio = 50_000_000 # R$ 50 milhões
 fator_asf_capital = 1.0 # Capital tem 100% de estabilidade
 
-# Custo de oportunidade do capital próprio (ex: 20% a.a.)
-custo_capital_proprio = 0.20
+# Custo de oportunidade do capital próprio (mais realista para mercado atual)
+custo_capital_proprio = 0.15 # 15% a.a.
 
 # Adicionar fator RSF aos ativos para NSFR
 ativos_df.fator_rsf = [0.0, 0.05, 0.05, 0.85] # Required Stable Funding
 
-# Adicionar duration aos ativos (sensibilidade a taxa de juros em anos)
-ativos_df.duration = [0.0, 1.0, 5.0, 3.0] # Caixa (0), Títulos Curto (1), Títulos Longo (5), Crédito (3)
+# Adicionar duration otimizada aos ativos (melhor matching possível)
+ativos_df.duration = [0.0, 0.8, 4.5, 2.8] # Caixa (0), Títulos Curto (0.8), Títulos Longo (4.5), Crédito (2.8)
 
 # Adicionar inflows para LCR (entradas de caixa em cenário de estresse)
 ativos_df.fator_inflow = [0.0, 0.0, 0.0, 0.15] # 15% do crédito privado gera inflows
+
+# Adicionar fatores de risco de base otimizados (imperfeição de hedge reduzida)
+ativos_df.risco_base_fator = [0.0, 0.03, 0.08, 0.12] # Caixa (0%), Títulos Curto (3%), Longo (8%), Crédito (12%)
 
 # Adicionar limites máximos para concentração de ativos
 ativos_df.limite_maximo = [Inf, Inf, Inf, 400_000_000] # Limite de R$ 400M para crédito privado
@@ -70,13 +74,16 @@ minimo_capital_adequacao = 0.115 # 11.5%
 # Reserva de capital para risco operacional (% do total de ativos)
 reserva_risco_operacional = 0.015 # 1.5% dos ativos totais
 
-# Limites para Duration Gap (controle de risco de taxa de juros)
-limite_duration_gap_min = -1.5 # Mínimo -1.5 anos
-limite_duration_gap_max = 1.5  # Máximo +1.5 anos
+# Limites para Duration Gap (padrão brasileiro mais restritivo)
+limite_duration_gap_min = -1.0 # Mínimo -1.0 ano
+limite_duration_gap_max = 1.0  # Máximo +1.0 ano
 duration_capital_proprio = 0.0 # Capital próprio tem duration zero
 
-# Capital para risco de mercado baseado no Duration Gap
-fator_capital_risco_mercado = 0.02 # 2% dos ativos para cada ano de Duration Gap absoluto
+# Capital para risco de mercado baseado no Duration Gap (padrão brasileiro)
+fator_capital_risco_prazo = 0.015 # 1.5% dos ativos para cada ano de Duration Gap absoluto
+
+# Capital para risco de base (hedges imperfeitos)
+perc_capital_risco_base = 0.08 # 8% de capital sobre exposição ao risco de base
 
 # Parâmetro mínimo NSFR
 minimo_nsfr = 1.0 # 100%
@@ -91,7 +98,8 @@ println(output_file, "Parâmetros regulatórios:")
 @printf(output_file, "Reserva Risco Operacional: %.1f%% dos ativos\n", reserva_risco_operacional * 100)
 @printf(output_file, "Mínimo NSFR: %.0f%%\n", minimo_nsfr * 100)
 @printf(output_file, "Duration Gap Permitido: %.1f a %.1f anos\n", limite_duration_gap_min, limite_duration_gap_max)
-@printf(output_file, "Capital Risco Mercado: %.1f%% dos ativos por ano de Duration Gap\n\n", fator_capital_risco_mercado * 100)
+@printf(output_file, "Capital Risco Prazo: %.1f%% dos ativos por ano de Duration Gap\n", fator_capital_risco_prazo * 100)
+@printf(output_file, "Capital Risco Base: %.1f%% sobre exposição a hedges imperfeitos\n\n", perc_capital_risco_base * 100)
 
 # 4. Construção do Modelo
 model = Model(HiGHS.Optimizer)
@@ -115,17 +123,27 @@ rwa_total_variavel = ativos_df.risco_ponderado' * alocacao
 capital_alocado_rwa = rwa_total_variavel * minimo_capital_adequacao
 capital_alocado_operacional = reserva_risco_operacional * sum(alocacao)
 
-# Capital para risco de mercado baseado na diferença absoluta de duration ponderada
+# Capital para risco de mercado - componente 1: Risco de Prazo (Duration Gap)
 # Usamos variáveis auxiliares para linearizar o valor absoluto do duration gap
 @variable(model, duration_gap_pos >= 0)
 @variable(model, duration_gap_neg >= 0)
 duration_ponderada_ativos_obj = ativos_df.duration' * alocacao
 duration_ponderada_passivos_obj = passivos_df.duration' * funding + duration_capital_proprio * Capital_Proprio
 @constraint(model, c_duration_gap_decomp, duration_ponderada_ativos_obj - duration_ponderada_passivos_obj == duration_gap_pos - duration_gap_neg)
-capital_alocado_mercado = fator_capital_risco_mercado * (duration_gap_pos + duration_gap_neg)
+capital_alocado_risco_prazo = fator_capital_risco_prazo * (duration_gap_pos + duration_gap_neg)
+
+# Capital para risco de mercado - componente 2: Risco de Base (hedges imperfeitos)
+exposicao_risco_base_ativos = ativos_df.risco_base_fator' * alocacao
+exposicao_risco_base_passivos = passivos_df.risco_base_fator' * funding
+exposicao_risco_base_total = exposicao_risco_base_ativos + exposicao_risco_base_passivos
+capital_alocado_risco_base = perc_capital_risco_base * exposicao_risco_base_total
+
+# Capital total para risco de mercado (prazo + base)
+capital_alocado_mercado = capital_alocado_risco_prazo + capital_alocado_risco_base
 
 capital_alocado_total = capital_alocado_rwa + capital_alocado_operacional + capital_alocado_mercado
-custo_capital = capital_alocado_total * custo_capital_proprio
+# Custo de capital sobre TODO o capital próprio (não apenas o alocado)
+custo_capital = Capital_Proprio * custo_capital_proprio
 # EVA antes de impostos
 eva_antes_impostos = retorno_total_ativos - custo_total_passivos - custos_operacionais_total - provisoes_total - custo_capital - custo_administrativo_fixo
 # EVA após impostos
@@ -156,7 +174,12 @@ total_ativos = sum(alocacao)
 # Requerimentos de capital por tipo de risco
 req_capital_credito = minimo_capital_adequacao * rwa_total
 req_capital_operacional = reserva_risco_operacional * total_ativos  
-req_capital_mercado = fator_capital_risco_mercado * (duration_gap_pos + duration_gap_neg)
+
+# Requerimento de capital para risco de mercado (prazo + base)
+req_capital_mercado_prazo = fator_capital_risco_prazo * (duration_gap_pos + duration_gap_neg)
+req_capital_mercado_base = perc_capital_risco_base * (ativos_df.risco_base_fator' * alocacao + passivos_df.risco_base_fator' * funding)
+req_capital_mercado = req_capital_mercado_prazo + req_capital_mercado_base
+
 req_capital_total = req_capital_credito + req_capital_operacional + req_capital_mercado
 
 @constraint(model, c_basileia, Capital_Proprio >= req_capital_total)
@@ -189,10 +212,17 @@ if termination_status(model) == OPTIMAL
     total_ativos_calculado = sum(value.(alocacao))
     capital_alocado_rwa_calculado = rwa_calculado * minimo_capital_adequacao
     capital_alocado_operacional_calculado = reserva_risco_operacional * total_ativos_calculado
-    capital_alocado_mercado_calculado = fator_capital_risco_mercado * (value(duration_gap_pos) + value(duration_gap_neg))
+    # Cálculo detalhado do capital de risco de mercado
+    capital_alocado_risco_prazo_calculado = fator_capital_risco_prazo * (value(duration_gap_pos) + value(duration_gap_neg))
+    exposicao_base_ativos_calculado = ativos_df.risco_base_fator' * value.(alocacao)
+    exposicao_base_passivos_calculado = passivos_df.risco_base_fator' * value.(funding)
+    exposicao_base_total_calculado = exposicao_base_ativos_calculado + exposicao_base_passivos_calculado
+    capital_alocado_risco_base_calculado = perc_capital_risco_base * exposicao_base_total_calculado
+    capital_alocado_mercado_calculado = capital_alocado_risco_prazo_calculado + capital_alocado_risco_base_calculado
     capital_alocado_calculado = capital_alocado_rwa_calculado + capital_alocado_operacional_calculado + capital_alocado_mercado_calculado
     capital_livre = Capital_Proprio - capital_alocado_calculado
-    custo_capital_calculado = capital_alocado_calculado * custo_capital_proprio
+    # Custo de capital deve ser aplicado sobre TODO o capital próprio, não apenas o alocado
+    custo_capital_calculado = Capital_Proprio * custo_capital_proprio
     
     # Calcular componentes do resultado
     retorno_calculado = ativos_df.retorno_esperado' * value.(alocacao)
@@ -201,6 +231,13 @@ if termination_status(model) == OPTIMAL
     provisoes_calculado = ativos_df.provisoes_perdas' * value.(alocacao)
     
     margem_financeira = retorno_calculado - custo_funding_calculado
+    
+    # Cálculo do Lucro Líquido (para ROE) - SEM descontar custo de capital
+    lucro_antes_impostos = margem_financeira - custos_operacionais_calculado - provisoes_calculado - custo_administrativo_fixo
+    impostos_sobre_lucro = lucro_antes_impostos * aliquota_impostos
+    lucro_liquido = lucro_antes_impostos - impostos_sobre_lucro
+    
+    # Cálculo do EVA (para análise de valor) - COM desconto do custo de capital
     eva_antes_impostos_calculado = margem_financeira - custos_operacionais_calculado - provisoes_calculado - custo_capital_calculado - custo_administrativo_fixo
     impostos_calculado = eva_antes_impostos_calculado * aliquota_impostos
     eva_apos_impostos_calculado = objective_value(model)
@@ -215,13 +252,20 @@ if termination_status(model) == OPTIMAL
     @printf(output_file, "Capital Alocado (RWA): R\$ %.2f\n", capital_alocado_rwa_calculado)
     @printf(output_file, "Capital Alocado (Risco Operacional): R\$ %.2f\n", capital_alocado_operacional_calculado)
     @printf(output_file, "Capital Alocado (Risco Mercado): R\$ %.2f\n", capital_alocado_mercado_calculado)
+    @printf(output_file, "  - Risco de Prazo (Duration Gap): R\$ %.2f\n", capital_alocado_risco_prazo_calculado)
+    @printf(output_file, "  - Risco de Base (Hedges Imperfeitos): R\$ %.2f\n", capital_alocado_risco_base_calculado)
     @printf(output_file, "Capital Alocado Total: R\$ %.2f\n", capital_alocado_calculado)
     @printf(output_file, "Capital Livre: R\$ %.2f\n", capital_livre)
     @printf(output_file, "Custo de Capital Alocado (%.1f%%): R\$ %.2f\n", custo_capital_proprio * 100, custo_capital_calculado)
     @printf(output_file, "EVA Antes de Impostos: R\$ %.2f\n", eva_antes_impostos_calculado)
     @printf(output_file, "Impostos (%.1f%%): R\$ %.2f\n", aliquota_impostos * 100, impostos_calculado)
     @printf(output_file, "EVA Após Impostos: R\$ %.2f\n", eva_apos_impostos_calculado)
-    @printf(output_file, "ROE: %.2f%%\n\n", (eva_apos_impostos_calculado / Capital_Proprio) * 100)
+    
+    println(output_file, "\n--- Análise de Lucro Líquido e ROE ---")
+    @printf(output_file, "Lucro Antes de Impostos: R\$ %.2f\n", lucro_antes_impostos)
+    @printf(output_file, "Impostos sobre Lucro (%.1f%%): R\$ %.2f\n", aliquota_impostos * 100, impostos_sobre_lucro)
+    @printf(output_file, "Lucro Líquido: R\$ %.2f\n", lucro_liquido)
+    @printf(output_file, "ROE (Retorno sobre Equity): %.2f%%\n\n", (lucro_liquido / Capital_Proprio) * 100)
 
     tamanho_otimo_balanco = sum(value.(funding)) + Capital_Proprio
     @printf(output_file, "--- Balanço Ótimo ---\nTamanho Total: R\$ %.2f\n", tamanho_otimo_balanco)
@@ -303,9 +347,19 @@ if termination_status(model) == OPTIMAL
     @printf(output_file, "Impacto no EVE: %.2f%% do total de ativos\n", impacto_eve_percent)
     @printf(output_file, "Impacto no EVE: R\$ %.2f\n", impacto_eve_valor)
     
+    # Análise de Risco de Base (Hedges Imperfeitos)
+    println(output_file, "\n--- Análise de Risco de Base (Hedges Imperfeitos) ---")
+    @printf(output_file, "Exposição Ativos ao Risco de Base: R\$ %.2f\n", exposicao_base_ativos_calculado)
+    @printf(output_file, "Exposição Passivos ao Risco de Base: R\$ %.2f\n", exposicao_base_passivos_calculado)
+    @printf(output_file, "Exposição Total ao Risco de Base: R\$ %.2f\n", exposicao_base_total_calculado)
+    @printf(output_file, "Capital Requerido (%.1f%%): R\$ %.2f\n", perc_capital_risco_base * 100, capital_alocado_risco_base_calculado)
+    @printf(output_file, "Percentual do Balanço Exposto: %.2f%%\n", (exposicao_base_total_calculado / total_ativos_calculado) * 100)
+    
     # Retornar valores para comparação
     return Dict(
         "eva" => objective_value(model),
+        "lucro_liquido" => lucro_liquido,
+        "roe" => (lucro_liquido / Capital_Proprio) * 100,
         "margem_financeira" => margem_financeira,
         "custo_capital" => custo_capital_calculado,
         "capital_alocado" => capital_alocado_calculado,
@@ -330,6 +384,9 @@ if termination_status(model) == OPTIMAL
         "impacto_eve_valor" => impacto_eve_valor,
         "reserva_operacional" => reserva_risco_operacional * total_ativos_calculado,
         "capital_alocado_mercado" => capital_alocado_mercado_calculado,
+        "capital_alocado_risco_prazo" => capital_alocado_risco_prazo_calculado,
+        "capital_alocado_risco_base" => capital_alocado_risco_base_calculado,
+        "exposicao_risco_base_total" => exposicao_base_total_calculado,
         "funding_otimo" => value.(funding),
         "alocacao_otima" => value.(alocacao)
     )
